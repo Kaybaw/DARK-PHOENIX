@@ -107,14 +107,14 @@ def create_vertical_video(tracks, scores, pyframes_path, pyavi_path, audio_path,
             scale_for_bg = max(
                 target_width / img.shape[1], target_height / img.shape[0])
             bg_width = int(img.shape[1] * scale_for_bg)
-            bg_heigth = int(img.shape[0] * scale_for_bg)
+            bg_height = int(img.shape[0] * scale_for_bg)
 
-            blurred_background = cv2.resize(img, (bg_width, bg_heigth))
+            blurred_background = cv2.resize(img, (bg_width, bg_height))
             blurred_background = cv2.GaussianBlur(
                 blurred_background, (121, 121), 0)
 
             crop_x = (bg_width - target_width) // 2
-            crop_y = (bg_heigth - target_height) // 2
+            crop_y = (bg_height - target_height) // 2
             blurred_background = blurred_background[crop_y:crop_y +
                                                     target_height, crop_x:crop_x + target_width]
 
@@ -236,7 +236,7 @@ def create_subtitles_with_ffmpeg(transcript_segments: list, clip_start: float, c
     subprocess.run(ffmpeg_cmd, shell=True, check=True)
 
 
-def process_clip(base_dir: str, original_video_path: str, s3_key: str, start_time: float, end_time: float, clip_index: int, transcript_segments: list):
+def process_clip(base_dir: pathlib.Path, original_video_path: pathlib.Path, s3_key: str, start_time: float, end_time: float, clip_index: int, transcript_segments: list):
     clip_name = f"clip_{clip_index}"
     s3_key_dir = os.path.dirname(s3_key)
     output_s3_key = f"{s3_key_dir}/{clip_name}.mp4"
@@ -301,9 +301,27 @@ def process_clip(base_dir: str, original_video_path: str, s3_key: str, start_tim
     create_subtitles_with_ffmpeg(transcript_segments, start_time,
                                  end_time, vertical_mp4_path, subtitle_output_path, max_words=5)
 
+    watermarked_output_path = clip_dir / "pyavi" / "video_with_lunartech_watermark.mp4"
+
+    watermark_command = (
+        f'ffmpeg -y -i "{subtitle_output_path}" '
+        f' -vf "drawtext=text=\'LUNARTECH\':fontcolor=white:fontsize=36:'
+        f'box=1:boxcolor=black@0.45:boxborderw=12:'
+        f'x=w-tw-30:y=30" '
+        f'-codec:a copy "{watermarked_output_path}"'
+    )
+
+    subprocess.run(
+        watermark_command,
+        shell=True,
+        check=True,
+        capture_output=True,
+        text=True
+    )
+
     s3_client = boto3.client("s3")
     s3_client.upload_file(
-        subtitle_output_path, os.environ["S3_BUCKET_NAME"], output_s3_key)
+        str(watermarked_output_path), os.environ["S3_BUCKET_NAME"], output_s3_key)
 
 
 @app.cls(gpu="L40S", timeout=3600, retries=0, scaledown_window=20, secrets=[modal.Secret.from_name("ai-podcast-clipper-secret")], volumes={mount_path: volume})
@@ -326,7 +344,7 @@ class AiPodcastClipper:
         self.gemini_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
         print("Created gemini client...")
 
-    def transcribe_video(self, base_dir: str, video_path: str) -> str:
+    def transcribe_video(self, base_dir: pathlib.Path, video_path: pathlib.Path) -> str:
         audio_path = base_dir / "audio.wav"
         extract_cmd = f"ffmpeg -i {video_path} -vn -acodec pcm_s16le -ar 16000 -ac 1 {audio_path}"
         subprocess.run(extract_cmd, shell=True,
@@ -387,7 +405,7 @@ class AiPodcastClipper:
     If there are no valid clips to extract, the output should be an empty list [], in JSON format. Also readable by json.loads() in Python.
 
     The transcript is as follows:\n\n""" + str(transcript))
-        print(f"Identified moments response: ${response.text}")
+        print(f"Identified moments response: {response.text}")
         return response.text
 
     @modal.fastapi_endpoint(method="POST")
