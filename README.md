@@ -138,6 +138,26 @@ Copy the `whsec_…` secret it prints into `STRIPE_WEBHOOK_SECRET`.
   (`PROCESS_VIDEO_ENDPOINT_AUTH`); rotate it any time the frontend or
   backend is redeployed by an untrusted party.
 
+## Custom Modifications
+
+### LUNARTECH Watermark Integration
+
+Added a visible LUNARTECH watermark to all generate clips during the FFmpeg rendering pipeline.
+
+The watermark is automatically burned into the final rendered video before upload to storage.
+
+
+### Development Process
+
+- Frontend configured and running locally
+- Supabase PostgreSQL database connected
+- Prisma schema synchronized
+- Authentication and dashboard functionality verified
+- Backend clip processing pipeline explored and modified
+- GitHub repository configured and synced
+- Custom watermark integration implemented
+
+
 ## License
 
 See [LICENSE.MD](LICENSE.MD).
