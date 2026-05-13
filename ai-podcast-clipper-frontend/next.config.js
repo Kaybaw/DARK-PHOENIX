@@ -1,8 +1,6 @@
-import { loadEnvConfig } from "@next/env";
-
-loadEnvConfig("..");
-
 /** @type {import("next").NextConfig} */
-const config = {};
+const nextConfig = {
+  experimental: {},
+};
 
-export default config;
+module.exports = nextConfig;
