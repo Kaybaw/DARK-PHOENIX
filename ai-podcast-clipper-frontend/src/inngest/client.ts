@@ -1,4 +1,13 @@
-import { Inngest } from "inngest";
+import { EventSchemas, Inngest } from "inngest";
 
-// Create a client to send and receive events
-export const inngest = new Inngest({ id: "ai-podcast-clipper-frontend" });
+export const inngest = new Inngest({
+  id: "ai-podcast-clipper-frontend",
+  schemas: new EventSchemas().fromRecord<{
+    "process-video-events": {
+      data: {
+        uploadedFileId: string;
+        userId: string;
+      };
+    };
+  }>(),
+});
