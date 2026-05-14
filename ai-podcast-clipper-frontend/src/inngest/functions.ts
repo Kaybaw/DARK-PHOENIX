@@ -17,6 +17,8 @@ export const processVideo = inngest.createFunction(
     const { uploadedFileId } = event.data;
 
     try {
+      console.log("processVideo started:", { uploadedFileId });
+
       const { userId, credits, s3Key } = await step.run(
         "check-credits",
         async () => {
@@ -41,6 +43,12 @@ export const processVideo = inngest.createFunction(
         },
       );
 
+      console.log("processVideo check-credits result:", {
+        userId,
+        credits,
+        s3Key,
+      });
+
       if (credits <= 0) {
         await step.run("set-status-no-credits", async () => {
           await db.uploadedFile.update({
@@ -59,6 +67,12 @@ export const processVideo = inngest.createFunction(
         });
       });
 
+      console.log("processVideo calling endpoint:", {
+        endpoint: env.PROCESS_VIDEO_ENDPOINT,
+        hasAuth: Boolean(env.PROCESS_VIDEO_ENDPOINT_AUTH),
+        s3Key,
+      });
+
       const processRes = await step.fetch(env.PROCESS_VIDEO_ENDPOINT, {
         method: "POST",
         body: JSON.stringify({ s3_key: s3Key }),
@@ -68,11 +82,17 @@ export const processVideo = inngest.createFunction(
         },
       });
 
-      if (!processRes.ok) {
-        const errBody = await processRes.text();
+      const processBody = await processRes.text();
 
+      console.log("processVideo endpoint response:", {
+        status: processRes.status,
+        ok: processRes.ok,
+        body: processBody.slice(0, 500),
+      });
+
+      if (!processRes.ok) {
         throw new Error(
-          `PROCESS_VIDEO_ENDPOINT returned ${processRes.status}: ${errBody.slice(
+          `PROCESS_VIDEO_ENDPOINT returned ${processRes.status}: ${processBody.slice(
             0,
             500,
           )}`,
@@ -83,10 +103,14 @@ export const processVideo = inngest.createFunction(
         const folderPrefix = s3Key.split("/")[0]!;
         const allKeys = await listS3ObjectsByPrefix(folderPrefix);
 
+        console.log("processVideo S3 objects found:", allKeys);
+
         const clipKeys = allKeys.filter(
           (key): key is string =>
             key !== undefined && !key.endsWith("original.mp4"),
         );
+
+        console.log("processVideo clip keys found:", clipKeys);
 
         if (clipKeys.length > 0) {
           await db.clip.createMany({
@@ -117,6 +141,11 @@ export const processVideo = inngest.createFunction(
           where: { id: uploadedFileId },
           data: { status: "processed" },
         });
+      });
+
+      console.log("processVideo completed:", {
+        uploadedFileId,
+        clipsFound,
       });
     } catch (error: unknown) {
       console.error("processVideo failed:", error);
