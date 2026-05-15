@@ -40,7 +40,7 @@ image = (modal.Image.from_registry(
         "wget -O /usr/share/fonts/truetype/custom/Anton-Regular.ttf https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf",
         "fc-cache -f -v",
     ])
-    .add_local_dcaccir("asd", "/asd", copy=True))
+    .add_local_dir("asd", "/asd", copy=True))
 
 app = modal.App("ai-podcast-clipper", image=image)
 
