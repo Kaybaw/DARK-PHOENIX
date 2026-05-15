@@ -19,7 +19,12 @@ from google import genai
 
 import pysubs2
 from tqdm import tqdm
-import whisperx
+
+# Flip to True when you want real transcription again.
+WHISPERX_ENABLED = False
+
+if WHISPERX_ENABLED:
+    import whisperx
 
 
 class ProcessVideoRequest(BaseModel):
@@ -35,7 +40,7 @@ image = (modal.Image.from_registry(
         "wget -O /usr/share/fonts/truetype/custom/Anton-Regular.ttf https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf",
         "fc-cache -f -v",
     ])
-    .add_local_dir("asd", "/asd", copy=True))
+    .add_local_dcaccir("asd", "/asd", copy=True))
 
 app = modal.App("ai-podcast-clipper", image=image)
 
@@ -330,21 +335,30 @@ class AiPodcastClipper:
     def load_model(self):
         print("Loading models")
 
-        self.whisperx_model = whisperx.load_model(
-            "large-v2", device="cuda", compute_type="float16")
+        if WHISPERX_ENABLED:
+            self.whisperx_model = whisperx.load_model(
+                "large-v2", device="cuda", compute_type="float16")
 
-        self.alignment_model, self.metadata = whisperx.load_align_model(
-            language_code="en",
-            device="cuda"
-        )
+            self.alignment_model, self.metadata = whisperx.load_align_model(
+                language_code="en",
+                device="cuda"
+            )
 
-        print("Transcription models loaded...")
+            print("Transcription models loaded...")
+        else:
+            print("WhisperX disabled (WHISPERX_ENABLED=False)")
 
         print("Creating gemini client...")
         self.gemini_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
         print("Created gemini client...")
 
     def transcribe_video(self, base_dir: pathlib.Path, video_path: pathlib.Path) -> str:
+        if not WHISPERX_ENABLED:
+            print(
+                "WhisperX disabled — skipping transcription (Gemini will find no clips)"
+            )
+            return json.dumps([])
+
         audio_path = base_dir / "audio.wav"
         extract_cmd = f"ffmpeg -i {video_path} -vn -acodec pcm_s16le -ar 16000 -ac 1 {audio_path}"
         subprocess.run(extract_cmd, shell=True,

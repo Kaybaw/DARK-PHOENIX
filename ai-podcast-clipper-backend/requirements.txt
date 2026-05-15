@@ -22,5 +22,5 @@ google-genai
 pysubs2
 boto3
 fastapi[standard]
-git+https://github.com/m-bain/whisperx.git@v3.1.1#egg=whisperx
+
 pyannote.audio==3.1.1
