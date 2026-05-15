@@ -1,3 +1,5 @@
+setuptools
+wheel
 tqdm
 torch==2.0.1
 torchaudio==2.0.2
@@ -19,4 +21,4 @@ pysubs2
 boto3
 fastapi[standard]
 whisperx @ git+https://github.com/m-bain/whisperx.git@v3.2.0
-pyannote-audio==3.1.1
+pyannote.audio==3.1.1
