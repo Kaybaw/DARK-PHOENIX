@@ -1,5 +1,6 @@
 setuptools
 wheel
+modal
 
 tqdm
 torch==2.0.1
