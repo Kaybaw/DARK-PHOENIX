@@ -8,7 +8,7 @@ import time
 import uuid
 import boto3
 import cv2
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 import ffmpegcv
 import modal
@@ -42,7 +42,26 @@ image = (modal.Image.from_registry(
     ])
     .add_local_dir("asd", "/asd", copy=True))
 
-app = modal.App("ai-podcast-clipper", image=image)
+modal_app = modal.App("ai-podcast-clipper", image=image)
+
+app = FastAPI()
+
+
+@app.get("/")
+def root():
+    return {"status": "ok"}
+
+
+@app.get("/health")
+def health():
+    return {"status": "healthy"}
+
+
+@modal_app.function()
+@modal.asgi_app()
+def serve_api():
+    return app
+
 
 volume = modal.Volume.from_name(
     "ai-podcast-clipper-model-cache", create_if_missing=True
@@ -329,7 +348,7 @@ def process_clip(base_dir: pathlib.Path, original_video_path: pathlib.Path, s3_k
         str(watermarked_output_path), os.environ["S3_BUCKET_NAME"], output_s3_key)
 
 
-@app.cls(gpu="L40S", timeout=3600, retries=0, scaledown_window=20, secrets=[modal.Secret.from_name("ai-podcast-clipper-secret")], volumes={mount_path: volume})
+@modal_app.cls(gpu="L40S", timeout=3600, retries=0, scaledown_window=20, secrets=[modal.Secret.from_name("ai-podcast-clipper-secret")], volumes={mount_path: volume})
 class AiPodcastClipper:
     @modal.enter()
     def load_model(self):
@@ -473,7 +492,7 @@ class AiPodcastClipper:
             shutil.rmtree(base_dir, ignore_errors=True)
 
 
-@app.local_entrypoint()
+@modal_app.local_entrypoint()
 def main():
     import requests
 
