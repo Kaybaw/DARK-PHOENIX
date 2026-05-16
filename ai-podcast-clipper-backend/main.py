@@ -490,21 +490,39 @@ class AiPodcastClipper:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                                 detail="Incorrect bearer token", headers={"WWW-Authenticate": "Bearer"})
         self._run_pipeline_impl(request.s3_key)
+        return {"status": "ok", "message": "processing complete"}
 
 
-@fastapi_app.post("/process-video")
-def process_video_http(
-    request: ProcessVideoRequest,
-    token: HTTPAuthorizationCredentials = Depends(auth_scheme),
-):
+def _verify_bearer(token: HTTPAuthorizationCredentials) -> None:
     if token.credentials != os.environ["AUTH_TOKEN"]:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect bearer token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    AiPodcastClipper().run_process_pipeline.remote(request.s3_key)
-    return {"status": "ok"}
+
+
+def _run_video_processing(s3_key: str) -> None:
+    """Block until GPU pipeline finishes (Inngest lists S3 only after this returns)."""
+    AiPodcastClipper().run_process_pipeline.remote(s3_key)
+
+
+@fastapi_app.post("/process-video")
+@fastapi_app.post("/")
+def process_video_http(
+    request: ProcessVideoRequest,
+    token: HTTPAuthorizationCredentials = Depends(auth_scheme),
+):
+    _verify_bearer(token)
+    try:
+        _run_video_processing(request.s3_key)
+    except Exception as exc:
+        print(f"process_video_http failed: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+    return {"status": "ok", "message": "processing complete"}
 
 
 @app.function(
@@ -520,21 +538,38 @@ def serve_api():
 def main():
     import requests
 
-    ai_podcast_clipper = AiPodcastClipper()
+    # Use serve_api for health + /process-video (same host Inngest should call).
+    try:
+        base_url = serve_api.get_web_url()
+    except Exception:
+        base_url = "https://<your-workspace>--serve-api.modal.run"
+        print("Deploy first (modal deploy main.py), then re-run to print real URLs.")
+    process_url = f"{base_url.rstrip('/')}/process-video"
+    health_url = f"{base_url.rstrip('/')}/health"
 
-    url = ai_podcast_clipper.process_video.web_url
+    print("\n--- Set these in project-root .env ---")
+    print(f"PROCESS_VIDEO_ENDPOINT={process_url}")
+    print("PROCESS_VIDEO_ENDPOINT_AUTH=<same as AUTH_TOKEN in Modal secret>")
+    print("\n--- Smoke test ---")
+    print(f"GET  {health_url}")
+    print(f"POST {process_url}")
 
-    payload = {
-        "s3_key": "test2/mi630min.mp4"
-    }
+    auth = os.environ.get("AUTH_TOKEN") or os.environ.get(
+        "PROCESS_VIDEO_ENDPOINT_AUTH", ""
+    )
+    if not auth:
+        print("\nWarning: set AUTH_TOKEN or PROCESS_VIDEO_ENDPOINT_AUTH in .env for POST test.")
+        return
 
+    response = requests.get(health_url, timeout=30)
+    response.raise_for_status()
+    print("health:", response.json())
+
+    payload = {"s3_key": "test2/mi630min.mp4"}
     headers = {
         "Content-Type": "application/json",
-        "Authorization": "Bearer 123123"
+        "Authorization": f"Bearer {auth}",
     }
-
-    response = requests.post(url, json=payload,
-                             headers=headers)
+    response = requests.post(process_url, json=payload, headers=headers, timeout=3600)
     response.raise_for_status()
-    result = response.json()
-    print(result)
+    print("process-video:", response.json())
