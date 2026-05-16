@@ -42,20 +42,7 @@ image = (modal.Image.from_registry(
     ])
     .add_local_dir("asd", "/asd", copy=True))
 
-modal_app = modal.App("ai-podcast-clipper", image=image)
-
-app = FastAPI()
-
-
-@app.get("/")
-def root():
-    return {"status": "ok"}
-
-
-@app.get("/health")
-def health():
-    return {"status": "healthy"}
-
+app = modal.App("ai-podcast-clipper", image=image)
 
 volume = modal.Volume.from_name(
     "ai-podcast-clipper-model-cache", create_if_missing=True
@@ -64,6 +51,18 @@ volume = modal.Volume.from_name(
 mount_path = "/root/.cache/torch"
 
 auth_scheme = HTTPBearer()
+
+fastapi_app = FastAPI()
+
+
+@fastapi_app.get("/")
+def root():
+    return {"status": "ok"}
+
+
+@fastapi_app.get("/health")
+def health():
+    return {"status": "healthy"}
 
 
 def create_vertical_video(tracks, scores, pyframes_path, pyavi_path, audio_path, output_path, framerate=25):
@@ -342,7 +341,7 @@ def process_clip(base_dir: pathlib.Path, original_video_path: pathlib.Path, s3_k
         str(watermarked_output_path), os.environ["S3_BUCKET_NAME"], output_s3_key)
 
 
-@modal_app.cls(gpu="L40S", timeout=3600, retries=0, scaledown_window=20, secrets=[modal.Secret.from_name("ai-podcast-clipper-secret")], volumes={mount_path: volume})
+@app.cls(gpu="L40S", timeout=3600, retries=0, scaledown_window=20, secrets=[modal.Secret.from_name("ai-podcast-clipper-secret")], volumes={mount_path: volume})
 class AiPodcastClipper:
     @modal.enter()
     def load_model(self):
@@ -435,8 +434,7 @@ class AiPodcastClipper:
         print(f"Identified moments response: {response.text}")
         return response.text
 
-    @modal.method()
-    def run_process_pipeline(self, s3_key: str):
+    def _run_pipeline_impl(self, s3_key: str):
         run_id = str(uuid.uuid4())
         base_dir = pathlib.Path("/tmp") / run_id
         base_dir.mkdir(parents=True, exist_ok=True)
@@ -479,17 +477,23 @@ class AiPodcastClipper:
             print(f"Cleaning up temp dir after {base_dir}")
             shutil.rmtree(base_dir, ignore_errors=True)
 
+    @modal.method()
+    def run_process_pipeline(self, s3_key: str):
+        """Invoke from the lightweight ASGI app via `.remote()` so work runs on GPU class."""
+        self._run_pipeline_impl(s3_key)
+
+    # Modal serves this at its own webhook URL (POST to / on that URL), not on fastapi_app.
+    # For POST /process-video on the unified API, use serve_api + fastapi_app route below.
     @modal.fastapi_endpoint(method="POST")
     def process_video(self, request: ProcessVideoRequest, token: HTTPAuthorizationCredentials = Depends(auth_scheme)):
         if token.credentials != os.environ["AUTH_TOKEN"]:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                                 detail="Incorrect bearer token", headers={"WWW-Authenticate": "Bearer"})
-        # Same Modal container — local call (not `.remote()`, which would double-schedule).
-        self.run_process_pipeline(request.s3_key)
+        self._run_pipeline_impl(request.s3_key)
 
 
-@app.post("/process-video")
-def process_video(
+@fastapi_app.post("/process-video")
+def process_video_http(
     request: ProcessVideoRequest,
     token: HTTPAuthorizationCredentials = Depends(auth_scheme),
 ):
@@ -503,16 +507,16 @@ def process_video(
     return {"status": "ok"}
 
 
-@modal_app.function(
+@app.function(
     secrets=[modal.Secret.from_name("ai-podcast-clipper-secret")],
     timeout=3600,
 )
 @modal.asgi_app()
 def serve_api():
-    return app
+    return fastapi_app
 
 
-@modal_app.local_entrypoint()
+@app.local_entrypoint()
 def main():
     import requests
 
