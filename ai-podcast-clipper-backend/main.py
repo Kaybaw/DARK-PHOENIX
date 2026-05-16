@@ -57,12 +57,6 @@ def health():
     return {"status": "healthy"}
 
 
-@modal_app.function()
-@modal.asgi_app()
-def serve_api():
-    return app
-
-
 volume = modal.Volume.from_name(
     "ai-podcast-clipper-model-cache", create_if_missing=True
 )
@@ -441,14 +435,8 @@ class AiPodcastClipper:
         print(f"Identified moments response: {response.text}")
         return response.text
 
-    @modal.fastapi_endpoint(method="POST")
-    def process_video(self, request: ProcessVideoRequest, token: HTTPAuthorizationCredentials = Depends(auth_scheme)):
-        s3_key = request.s3_key
-
-        if token.credentials != os.environ["AUTH_TOKEN"]:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                                detail="Incorrect bearer token", headers={"WWW-Authenticate": "Bearer"})
-
+    @modal.method()
+    def run_process_pipeline(self, s3_key: str):
         run_id = str(uuid.uuid4())
         base_dir = pathlib.Path("/tmp") / run_id
         base_dir.mkdir(parents=True, exist_ok=True)
@@ -490,6 +478,38 @@ class AiPodcastClipper:
         if base_dir.exists():
             print(f"Cleaning up temp dir after {base_dir}")
             shutil.rmtree(base_dir, ignore_errors=True)
+
+    @modal.fastapi_endpoint(method="POST")
+    def process_video(self, request: ProcessVideoRequest, token: HTTPAuthorizationCredentials = Depends(auth_scheme)):
+        if token.credentials != os.environ["AUTH_TOKEN"]:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                                detail="Incorrect bearer token", headers={"WWW-Authenticate": "Bearer"})
+        # Same Modal container — local call (not `.remote()`, which would double-schedule).
+        self.run_process_pipeline(request.s3_key)
+
+
+@app.post("/process-video")
+def process_video(
+    request: ProcessVideoRequest,
+    token: HTTPAuthorizationCredentials = Depends(auth_scheme),
+):
+    if token.credentials != os.environ["AUTH_TOKEN"]:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    AiPodcastClipper().run_process_pipeline.remote(request.s3_key)
+    return {"status": "ok"}
+
+
+@modal_app.function(
+    secrets=[modal.Secret.from_name("ai-podcast-clipper-secret")],
+    timeout=3600,
+)
+@modal.asgi_app()
+def serve_api():
+    return app
 
 
 @modal_app.local_entrypoint()
